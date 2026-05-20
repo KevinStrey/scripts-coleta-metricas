@@ -189,6 +189,17 @@ def commit_ja_coletado(hash_commit: str) -> bool:
     return True
 
 
+def commit_tem_resultados(hash_commit: str) -> bool:
+    output_dir = Path("results") / hash_commit
+    if not output_dir.is_dir():
+        return False
+    return any(output_dir.rglob("*.java"))
+
+
+def resultados_ja_coletados(lista_commits: list[str]) -> bool:
+    return all(commit_tem_resultados(commit) for commit in lista_commits)
+
+
 def listar_java_modificados(prev_commit: str, curr_commit: str) -> tuple[set[str], set[str]]:
     modificados: set[str] = set()
     removidos: set[str] = set()
@@ -447,14 +458,17 @@ if __name__ == "__main__":
     
     lista_commits = lista_commits[::-1] #inversão da lista para ele ficar em ordem cronológica
 
-    if args.incremental:
-        commit0 = lista_commits[0]
-        extrair_method_files_commit(commit0)
-        for prev_commit, curr_commit in zip(lista_commits, lista_commits[1:]):
-            extrair_method_files_incremental(prev_commit, curr_commit)
+    if resultados_ja_coletados(lista_commits):
+        print("Resultados ja coletados para todos os commits. Pulando extracao de metodos.")
     else:
-        for commit in lista_commits:
-            extrair_method_files_commit(commit)
+        if args.incremental:
+            commit0 = lista_commits[0]
+            extrair_method_files_commit(commit0)
+            for prev_commit, curr_commit in zip(lista_commits, lista_commits[1:]):
+                extrair_method_files_incremental(prev_commit, curr_commit)
+        else:
+            for commit in lista_commits:
+                extrair_method_files_commit(commit)
 
     commit0 = lista_commits[0]
 
@@ -477,6 +491,7 @@ if __name__ == "__main__":
 
     # commits seguintes
     for release, (prev, curr) in enumerate(zip(lista_commits, lista_commits[1:]), start=2):
+        print("Coletando dados iniciais do commit" + str(release))
         prev_map = map_method_files_diretorio_commits(f"results/{prev}")
         curr_map = map_method_files_diretorio_commits(f"results/{curr}")
 
