@@ -499,10 +499,20 @@ if __name__ == "__main__":
         comuns = curr_map.keys() & prev_map.keys()
 
         # novos -> BOM
-        for method_id in novos:
-            state = store.get_or_create(method_id)
-            nloc_birth = contar_loc(curr_map[method_id])
-            state.on_seen(release, nloc_birth)
+    for method_id in novos:
+        state = store.get_or_create(method_id)
+        nloc_birth = contar_loc(curr_map[method_id])
+        state.on_seen(release, nloc_birth)
+
+        file_path, method_name = parse_file_method(method_id)
+        metrics = state.finalize_release(release)
+        row = [
+            project, curr, prev, release, file_path, method_name,
+            state.bom, 0, state.fch, state.lch, 0, state.frch, 0.0,
+            metrics["wch"], metrics["wcd"], state.wfr, 0,
+            state.lca, state.lcd, state.csb, metrics["csbs"], metrics["acdf"]
+        ]
+        writer.writerow(row)
 
         # comuns -> diff
         for method_id in comuns:
