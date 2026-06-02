@@ -43,16 +43,30 @@ class EstadoMetricas:
 
         chd = (tach / loc_current) if loc_current > 0 else 0.0
 
-        self.tach_hist.append(tach)
-        self.chd_hist.append(chd)
+        idx = release - self.bom
+        if idx < 0:
+            idx = 0
+        if len(self.tach_hist) <= idx:
+            self.tach_hist.extend([0] * (idx + 1 - len(self.tach_hist)))
+        if len(self.chd_hist) <= idx:
+            self.chd_hist.extend([0.0] * (idx + 1 - len(self.chd_hist)))
+        self.tach_hist[idx] = tach
+        self.chd_hist[idx] = chd
 
         self.lca = tach
         self.lcd = chd
         self.acdf_sum += chd
 
-    def on_no_change(self) -> None:
-        self.tach_hist.append(0)
-        self.chd_hist.append(0.0)
+    def on_no_change(self, release: int) -> None:
+        idx = release - self.bom
+        if idx < 0:
+            return
+        if len(self.tach_hist) <= idx:
+            self.tach_hist.extend([0] * (idx + 1 - len(self.tach_hist)))
+        if len(self.chd_hist) <= idx:
+            self.chd_hist.extend([0.0] * (idx + 1 - len(self.chd_hist)))
+        self.tach_hist[idx] = 0
+        self.chd_hist[idx] = 0.0
 
     def finalize_release(self, release: int) -> dict:
         expected = release - self.bom + 1
@@ -64,11 +78,12 @@ class EstadoMetricas:
         n = release
         wch = 0.0
         wcd = 0.0
-        # mesmo criterio do original: historico ate a release anterior
-        for i, r in enumerate(range(self.bom, n)):
-            w = 2 ** ((r + 1) - n)
-            wch += self.tach_hist[i] * w
-            wcd += self.chd_hist[i] * w
+        # mesmo criterio do original: historico ate a release atual
+        for r in range(self.bom + 1, n + 1):
+            idx = r - self.bom
+            w = 2 ** (r - n)
+            wch += self.tach_hist[idx] * w
+            wcd += self.chd_hist[idx] * w
 
         csbs = (self.csb / self.csbs_base) if self.csbs_base > 0 else 0.0
         acdf = (self.acdf_sum / self.frch) if self.frch > 0 else 0.0
@@ -334,7 +349,7 @@ def extrair_method_files_commit(hash_commit): #arrumar o hash_commit
     extrair_metodos_de_arquivos(hash_commit, lista_arquivos_java)
 
 def preparar_ambiente(link_repositorio):
-    header = ['project', 'commit', 'commitprevious', 'release', 'file', 'method', 'BOM', 'TACH', 'FCH', 'LCH',
+    header = ['project', 'commit', 'commitprevious', 'release', 'file', 'method', 'LOC', 'BOM', 'TACH', 'FCH', 'LCH',
                       'CHO', 'FRCH', 'CHD', 'WCH', 'WCD', 'WFR', 'ATAF', 'LCA', 'LCD', 'CSB', 'CSBS', 'ACDF']
     if not isdir("results"):
         os.mkdir("results")
@@ -479,11 +494,12 @@ if __name__ == "__main__":
         state = store.get_or_create(method_id)
         nloc_birth = contar_loc(path)
         state.on_seen(release=1, nloc=nloc_birth)
+        state.on_no_change(release=1)
 
         # escrever CSV com TACH=0, CHO=0, etc
         file_path, method_name = parse_file_method(method_id)
         row = [
-            project, commit0, "", 1, file_path, method_name,
+            project, commit0, "", 1, file_path, method_name, nloc_birth,
             state.bom, 0, state.fch, state.lch, 0, state.frch, 0,
             0, 0, state.wfr, 0, state.lca, state.lcd, state.csb, 0, 0
         ]
@@ -499,36 +515,38 @@ if __name__ == "__main__":
         comuns = curr_map.keys() & prev_map.keys()
 
         # novos -> BOM
-    for method_id in novos:
-        state = store.get_or_create(method_id)
-        nloc_birth = contar_loc(curr_map[method_id])
-        state.on_seen(release, nloc_birth)
+        for method_id in novos:
+            state = store.get_or_create(method_id)
+            nloc_birth = contar_loc(curr_map[method_id])
+            state.on_seen(release, nloc_birth)
+            state.on_no_change(release)
 
-        file_path, method_name = parse_file_method(method_id)
-        metrics = state.finalize_release(release)
-        row = [
-            project, curr, prev, release, file_path, method_name,
-            state.bom, 0, state.fch, state.lch, 0, state.frch, 0.0,
-            metrics["wch"], metrics["wcd"], state.wfr, 0,
-            state.lca, state.lcd, state.csb, metrics["csbs"], metrics["acdf"]
-        ]
-        writer.writerow(row)
+            file_path, method_name = parse_file_method(method_id)
+            metrics = state.finalize_release(release)
+            row = [
+                project, curr, prev, release, file_path, method_name, nloc_birth,
+                state.bom, 0, state.fch, state.lch, 0, state.frch, 0.0,
+                metrics["wch"], metrics["wcd"], state.wfr, 0,
+                state.lca, state.lcd, state.csb, metrics["csbs"], metrics["acdf"]
+            ]
+            writer.writerow(row)
 
         # comuns -> diff
         for method_id in comuns:
             state = store.get_or_create(method_id)
             prev_path = prev_map[method_id]
             curr_path = curr_map[method_id]
+            loc_current = contar_loc(curr_path)
 
             if not filecmp.cmp(prev_path, curr_path, shallow=False):
                 added, deleted = contar_linhas_adicionadas_e_deletadas(prev_path, curr_path)
                 tach = added + deleted
-                loc_current = contar_loc(curr_path)
                 state.on_change(release, tach, loc_current)
                 cho = 1
             else:
                 tach = 0
                 cho = 0
+                state.on_no_change(release)
 
             metrics = state.finalize_release(release)
             ataf = tach / state.frch if state.frch > 0 else 0
@@ -539,7 +557,7 @@ if __name__ == "__main__":
             state.wfr += (release - 1) * cho
 
             row = [
-                project, curr, prev, release, file_path, method_name,
+                project, curr, prev, release, file_path, method_name, loc_current,
                 state.bom, tach, state.fch, state.lch, cho, state.frch, chd,
                 metrics["wch"], metrics["wcd"], state.wfr, ataf,
                 state.lca, state.lcd, state.csb, metrics["csbs"], metrics["acdf"]
